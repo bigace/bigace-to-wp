@@ -27,15 +27,11 @@ There seems to be no license attached, maybe Public Domain or [CC0](http://creat
 9. That's it - now you can enjoy your new wordpress site
 
 ## Open issues
-* import posts with category mapping
-* tags can be imported from the "catchwords" column in every item table
 * search for "FIXME"
-* add file import
-* add image import
+* add image and file import if possible
 * add content (table) import (as meta data for a post?)
 * add configuration import ?
 * generic entries table
-
 
 ## Known limitations/issues
 * draft items will be skipped
