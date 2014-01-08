@@ -1,9 +1,12 @@
 <?php
 /*
 Plugin Name: Bigace to Wordpress importer
+Plugin URI: https://github.com/bigace/bigace-to-wp
 Description: Import content from a Bigace powered site into WordPress
+Author: Kevin Papst
+Author URI: http://www.kevinpapst.de/
 License: Public Domain or CC0 ( http://creativecommons.org/publicdomain/zero/1.0/ )
-Version: 0.1
+Version: 1.0
 Changelog: Please see README.md
 Kudos: Code was forked from the s9y (serendipity) importer and adjusted to work with Bigace, see https://raw.github.com/ShakataGaNai/s9y-to-wp/
 */
