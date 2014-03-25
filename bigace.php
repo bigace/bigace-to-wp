@@ -23,7 +23,10 @@ define('BIGACE_IMPORTER_GMT_DIFF', 2*60*60);
 // see http://atastypixel.com/blog/wordpress/plugins/custom-permalinks/
 define('BIGACE_IMPORTER_CUSTOMPERMALINKS', true);
 // return an array of replacer for your imported URL (ignored if you use the custom-permalink plugin)
-function get_permalink_replacer() { return array('trennkost-blog\/' => '', '.html' => ''); }
+function get_permalink_replacer() {
+    return array();
+    //return array('blog\/' => '', '.html' => '');
+}
 // UNUSED BY NOW - post id to which all images will be linked
 define('BIGACE_IMPORTER_IMAGE_POST_ID', 1);
 // ==========================================================================================
@@ -150,11 +153,11 @@ class Bigace_Import extends WP_Importer
 		$prefix = get_option('spre');
 		$cid = get_option('bigacecommunityid');
 
-		return $bigacedb->get_results('SELECT A.name as category_name, A.id as categoryid, B.name AS parentname
-									FROM '.$prefix.'category A
-									LEFT JOIN '.$prefix.'category B ON A.parentid = B.id
+		return $bigacedb->get_results('SELECT a.name as category_name, a.id as categoryid, b.name AS parentname
+									FROM '.$prefix.'category a
+									LEFT JOIN '.$prefix.'category b ON a.parentid = b.id
 									WHERE a.cid='.$cid.' and b.cid='.$cid.'
-									ORDER BY A.parentid, A.id',
+									ORDER BY a.parentid, a.id',
 									 ARRAY_A);
 	}
 
@@ -942,6 +945,24 @@ class Bigace_Import extends WP_Importer
 		printf('<li><label for="dbprefix">%s</label> <input type="text" name="dbprefix" id="dbprefix"  value="%s" /></li>', __('Bigace Table prefix (if any):'), $dbPrefix);
 		printf('<li><label for="dbcharset">%s</label> <input type="text" name="dbcharset" id="dbcharset" value="%s" /></li>', __('Bigace Table charset:'), $dbCharset);
 		printf('<li><label for="dbcid">%s</label> <input type="text" name="dbcid" id="dbcid" value="%s" /></li>', __('Bigace Community ID:'), $cid);
+
+        // ==========================================
+        // if possible display existing communities
+        $baseDir = get_option('bigacepath');
+        $cidIniPath = $baseDir . '/system/config/consumer.ini';
+        if (file_exists($cidIniPath))
+        {
+            $allCids = @parse_ini_file($cidIniPath, true);
+            if (!empty($allCids)) {
+                echo 'Existing: <ul>';
+                foreach($allCids as $cidName => $cidConfig) {
+                    echo '<li><a href="#" onclick="jQuery(\'#dbcid\').val(\'' . $cidConfig['id'] . '\')">[ID ' . $cidConfig['id'] . '] ' . $cidName . '</a></li>';
+                }
+                echo '</ul>';
+            }
+        }
+        // ==========================================
+
 		echo '</ul>';
 	}
 	
