@@ -26,14 +26,13 @@ There seems to be no license attached, maybe Public Domain or [CC0](http://creat
 8. Fill out the information, follow the proccess
 9. That's it - now you can enjoy your new wordpress site
 
-## Open issues
-* search for "FIXME"
-* add image and file import if possible
+## Ideas for the future
 * add content (table) import (as meta data for a post?)
 * add configuration import ?
-* generic entries table
 
 ## Known limitations/issues
+* images and files cannot be imported
+* generic entries table
 * draft items will be skipped
 * history items will be skipped
 * workflow items are skipped
