@@ -1019,7 +1019,7 @@ class Bigace_Import extends WP_Importer
 					delete_option('bigacecharset');
 				add_option('bigacecharset',$_POST['dbcharset']); 
 			}			
-			if($_POST['dbcid'])
+			if(isset($_POST['dbcid'])) // cid might be zero (0) and that converts to false
 			{
 				if(get_option('bigacecommunityid'))
 					delete_option('bigacecommunityid');
