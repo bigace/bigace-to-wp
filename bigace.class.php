@@ -1,118 +1,142 @@
 <?php
-/*
-Plugin Name: Bigace to Wordpress importer
-Plugin URI: https://github.com/bigace/bigace-to-wp
-Description: Import content from a Bigace powered site into WordPress
-Author: Kevin Papst
-Author URI: http://www.kevinpapst.de/
-License: Public Domain or CC0 ( http://creativecommons.org/publicdomain/zero/1.0/ )
-Version: 1.0
-Changelog: Please see README.md
-Kudos: Code was forked from the s9y (serendipity) importer and adjusted to work with Bigace, see https://raw.github.com/ShakataGaNai/s9y-to-wp/
-*/
 
-// ==========================================================================================
-// CONFIGURATIONS FOR THE IMPORT PROCESS
-// ==========================================================================================
-// temporary password for the imported users (needs to be changed manually afterwards)
-define('BIGACE_IMPORTER_PASSWORD', 'password123');
-// shall the new user use the rich editor or plain text html
-define('BIGACE_IMPORTER_RICHEDIT', 'true');
-// seconds between your timezone and GMT
-define('BIGACE_IMPORTER_GMT_DIFF', 2*60*60);
-// see http://atastypixel.com/blog/wordpress/plugins/custom-permalinks/
-define('BIGACE_IMPORTER_CUSTOMPERMALINKS', true);
-// return an array of replacer for your imported URL (ignored if you use the custom-permalink plugin)
-function get_permalink_replacer() {
-    return array();
-    //return array('blog\/' => '', '.html' => '');
-}
-// UNUSED BY NOW - post id to which all images will be linked
-define('BIGACE_IMPORTER_IMAGE_POST_ID', 1);
-// ==========================================================================================
-
-set_time_limit(0);
-ini_set('display_errors', true);
-
-/* borrowed from movable type importer plugin */
 if ( !defined('WP_LOAD_IMPORTERS') )
-	return;
-
+    return;
 
 // Load Importer API
 require_once ABSPATH . 'wp-admin/includes/import.php';
 
 if ( !class_exists( 'WP_Importer' ) ) {
-	$class_wp_importer = ABSPATH . 'wp-admin/includes/class-wp-importer.php';
-	if ( file_exists( $class_wp_importer ) )
-		require_once $class_wp_importer;
+    $class_wp_importer = ABSPATH . 'wp-admin/includes/class-wp-importer.php';
+    if ( file_exists( $class_wp_importer ) )
+        require_once $class_wp_importer;
 }
-/* End borrowed */
 
 /**
- * Add These Functions to make our lives easier
+ * Class BigaceImporter
  */
-if(!function_exists('get_catbynicename')) {
+abstract class BigaceImporter extends WP_Importer
+{
+
+    private $db;
+
+    /**
+     * CONFIGURATIONS FOR THE IMPORT PROCESS
+     *
+     * @var array
+     */
+    protected $options = array(
+        // temporary password for the imported users (needs to be changed manually afterwards)
+        'password'      => 'password123',
+        // shall the new user use the rich editor or plain text html
+        'richedit'      => 'true',
+        // seconds between your timezone and GMT
+        'gmt_diff'      => 7200,
+        // see http://atastypixel.com/blog/wordpress/plugins/custom-permalinks/
+        'permalinks'    => true,
+        // UNUSED BY NOW - post id to which all images will be linked
+        'imageID'       => 1,
+        // an array of replacers (search => replace) for your imported URL (will be ignored, if you use the custom-permalink plugin)
+        'replacer'      => array()
+    );
+
+    public function __construct($options = null) {
+        set_time_limit(0);
+        ini_set('display_errors', true);
+
+        if ($options !== null) {
+            $this->setOptions($options);
+        }
+    }
+
+    public abstract function getBigaceVersion();
+    public abstract function getImporterName();
+    public abstract function getBigaceConfig($baseDir);
+    public abstract function buildCidPath($baseDir, $cid, $itemtype);
+    public abstract function getBodyForPost($post);
+
+    public function createUrl($step, $values = array()) {
+        $url = 'admin.php?import='.$this->getImporterName().'&amp;step='.$step;
+        if (!empty($values)) {
+            $url .= '&amp;' . implode('=', $values);
+        }
+        return $url;
+    }
+
+    public function getOption($name, $default = null) {
+        if (isset($this->options[$name])) {
+            return $this->options[$name];
+        }
+
+        return $default;
+    }
+
+    public function getOptions() {
+        return $this->options;
+    }
+
+    public function setOptions($options) {
+        $this->options = array_merge($this->options, $options);
+    }
+
+    function get_permalink_replacer() {
+        //return array('blog\/' => '', '.html' => '');
+        return $this->getOption('replacer', array());
+    }
+
+    function displayError($msg) {
+        echo '<p style="color:red;"><strong>'.$msg.'</strong></p>';
+    }
+
     function get_catbynicename($category_nicename) {
         global $wpdb;
 	    $name = $wpdb->get_var('SELECT cat_ID FROM '.$wpdb->categories.' WHERE category_nicename="'.$category_nicename.'"');
 	    return $name;
     }
-}
 
-if(!function_exists('get_comment_count')) {
 	function get_comment_count($post_ID)
 	{
 		global $wpdb;
 		return $wpdb->get_var('SELECT count(*) FROM '.$wpdb->comments.' WHERE comment_post_ID = '.$post_ID);
 	}
-}
 
-if(!function_exists('link_exists')) {
 	function link_exists($linkname)
 	{
 		global $wpdb;
 		return $wpdb->get_var('SELECT link_id FROM '.$wpdb->links.' WHERE link_name = "'.$wpdb->escape($linkname).'"');
 	}
-}
 
-if(!function_exists('find_comment_parent')) {
 	function find_comment_parent($haystack, $needle)
 	{
-		ini_set('display_errors', true);
 		foreach($haystack as $h)
 		{
 			if($h[0] == $needle)
 				return $h[1];
 		}
 	}
-}
 
-if(!function_exists('get_cat_by_name')) {
 	function get_cat_by_name($cat_name)
 	{
 		global $wpdb;
 		return $wpdb->get_var("SELECT term_id from ".$wpdb->terms." WHERE name = '$cat_name'");
 	}
-}
-
-/**
- * The Main Importer Class
- */
-class Bigace_Import extends WP_Importer
-{
 
     function connect_bigacedb()
     {
-        $bigacedb = new wpdb(
-            get_option('bigaceuser'),
-            get_option('bigacepass'),
-            get_option('bigacename'),
-            get_option('bigacehost')
-        );
-        $bigacedb->set_charset($bigacedb->dbh, get_option('bigacecharset'));
- 		set_magic_quotes_runtime(0);
-		return $bigacedb;
+        if ($this->db === null)
+        {
+            $bigacedb = new wpdb(
+                get_option('bigaceuser'),
+                get_option('bigacepass'),
+                get_option('bigacename'),
+                get_option('bigacehost')
+            );
+            $bigacedb->set_charset($bigacedb->dbh, get_option('bigacecharset'));
+            set_magic_quotes_runtime(0);
+
+            $this->db = $bigacedb;
+        }
+		return $this->db;
     }
 
 	function header() 
@@ -129,9 +153,9 @@ class Bigace_Import extends WP_Importer
 
     function greet()
     {
-        echo '<p>'.__('Howdy! This importer allows you to extract posts from any Bigace v2.7.8 site into your blog. This has not been tested on previous versions of Wordpress. Mileage may vary.').'</p>';
+        echo '<p>'.__('Howdy! This importer allows you to extract posts from any Bigace v'.$this->getBigaceVersion().' site into your blog. This has not been tested on other versions than Wordpress 3.8.1 and Bigace '.$this->getBigaceVersion().'. Mileage may vary.').'</p>';
         echo '<p>'.__('Give the path to your Bigace installation root directory:').'</p>';
-        echo '<form action="admin.php?import=bigace&amp;step=10" method="post">';
+        echo '<form action="'.$this->createUrl('10').'" method="post">';
         $this->path_form();
         echo '<input type="submit" name="submit" value="'.__('Configure importer').'" />';
         echo '</form>';
@@ -140,7 +164,7 @@ class Bigace_Import extends WP_Importer
 	function greet2()
 	{
 		echo '<p>'.__('Your Bigace configuration settings are as follows:').'</p>';
-		echo '<form action="admin.php?import=bigace&amp;step=20" method="post">';
+		echo '<form action="'.$this->createUrl('20').'" method="post">';
 		$this->db_form();
 		echo '<input type="submit" name="submit" value="'.__('Import Categories').'" />';
 		echo '</form>';
@@ -183,8 +207,15 @@ class Bigace_Import extends WP_Importer
 		$bigacedb = $this->connect_bigacedb();
 		$prefix = get_option('spre');
 		$cid = get_option('bigacecommunityid');
-		
-		$posts = $bigacedb->get_results('SELECT 
+
+        /**
+         * FIXME the next ones are used in posts2wp()
+         *
+         * @var $author
+         * @var $body
+         */
+
+        $posts = $bigacedb->get_results('SELECT
 							id,
 							createdate as timestamp,
 							createby as authorid,
@@ -194,10 +225,9 @@ class Bigace_Import extends WP_Importer
 							description as extended,
 							catchwords as tags, 
 							unique_name as permalink,
-							num_4 as news_image,
-							viewed
+							num_4 as news_image
  			   		      FROM '.$prefix.'item_1 WHERE cid='.$cid.' LIMIT '.$start.',100', ARRAY_A);
-		
+
 		return $posts;
 	}
 
@@ -265,15 +295,19 @@ class Bigace_Import extends WP_Importer
 			foreach ($categories as $category) 
 			{
 				$count++;
-				extract($category);
-				
-				
+                /**
+                 * @var $category_name
+                 * @var $parentid
+                 * @var $categoryid
+                 */
+                extract($category);
+
 				// Make Nice Variables
 				$title = $wpdb->escape($category_name);
 				$slug = sanitize_title($title);
 				//$slug = $categoryid . '-' . sanitize_title($title);
 				$name = $wpdb->escape($title);
-				$parent = $bigacecat2wpcat[ $parentid ];
+				$parent = $bigacecat2wpcat[$parentid];
 				
 				$args = array('category_nicename' => $slug, 'cat_name' => $name );
 				
@@ -305,7 +339,14 @@ class Bigace_Import extends WP_Importer
 			echo '<p>'.__('Importing Users...').'<br /><br /></p>';
 			foreach($users as $user)
 			{
-				extract($user);
+                /**
+                 * @var $userid
+                 * @var $username
+                 * @var $realname
+                 * @var $email
+                 * @var $user_id
+                 */
+                extract($user);
 				
 				// anonymous
 				if ($userid == 2) {
@@ -340,7 +381,7 @@ class Bigace_Import extends WP_Importer
 				{
 					$ret_id = wp_insert_user(array(
 								'user_login'	=> $user_login,
-								'user_pass'     => BIGACE_IMPORTER_PASSWORD,
+								'user_pass'     => $this->getOption('password'),
 								'user_nicename'	=> $user_name,
 								'user_email'	=> $email,
 								'user_url'	=> 'http://',
@@ -362,7 +403,7 @@ class Bigace_Import extends WP_Importer
 				//$user->set_role('contributor');
 				//update_user_meta( $ret_id, 'wp_user_level', '2' );
 				
-				update_user_meta( $ret_id, 'rich_editing', BIGACE_IMPORTER_RICHEDIT); // ???
+				update_user_meta($ret_id, 'rich_editing', $this->getOption('richedit')); // ???
 
 			}// End foreach($users as $user)
 			
@@ -407,6 +448,7 @@ class Bigace_Import extends WP_Importer
                  * @var $id
                  * @var $extended
                  * @var $timestamp
+                 * @var $author
                  * @var $authorid
                  * @var $last_modified
                  * @var $title
@@ -414,7 +456,6 @@ class Bigace_Import extends WP_Importer
                  * @var $body
                  * @var $tags
                  * @var $permalink
-                 * @var $viewed
                  * @var news_image TODO - see if it possible to import image
                  */
                 extract($post);
@@ -426,29 +467,25 @@ class Bigace_Import extends WP_Importer
 
 				$post_title = $wpdb->escape($title);
 
-                $itemFile = $baseDir . '/consumer/cid'.$cid.'/items/html/' . $filename;
-                $body = '';
-                if (file_exists($itemFile)) {
-                    $body = file_get_contents($itemFile);
+                $content = $this->getBodyForPost($post);
+
+                if ($content !== false) {
+                    $body = $content;
                 } else {
                     $countMissing++;
                 }
 
-				if ($wpdb->escape($extended) != "") {
-					$post_body = '<p>' . $wpdb->escape($extended) . '</p>' . $wpdb->escape($body);
-				} else {
-                    $post_body = $wpdb->escape($body);
-				}
-
+                $post_body = $wpdb->escape($body);
+                $post_excerpt = $wpdb->escape($extended);
 				$post_time = date('Y-m-d H:i:s', $timestamp);
-                $post_time_gmt = date('Y-m-d H:i:s', $timestamp - BIGACE_IMPORTER_GMT_DIFF);
+                $post_time_gmt = date('Y-m-d H:i:s', $timestamp - $this->getOption('gmt_diff'));
 				$post_modified = date('Y-m-d H:i:s', $last_modified);
-                $post_modified_gmt = date('Y-m-d H:i:s', $last_modified - BIGACE_IMPORTER_GMT_DIFF);
+                $post_modified_gmt = date('Y-m-d H:i:s', $last_modified - $this->getOption('gmt_diff'));
                 $post_status = 'publish';
 
                 //$permalink = get_site_url( null, $permalink, null );
                 $new_permalink = $permalink;
-                $replacer = get_permalink_replacer();
+                $replacer = $this->get_permalink_replacer();
                 foreach($replacer as $search => $replace) {
                     $new_permalink = preg_replace('/'.$search.'/', $replace, $new_permalink);
                 }
@@ -469,6 +506,7 @@ class Bigace_Import extends WP_Importer
                         'post_modified_gmt' => $post_modified_gmt,
                         'post_title'		=> $post_title,
                         'post_content'		=> $post_body,
+                        'post_excerpt'		=> $post_excerpt,
                         'post_status'		=> $post_status,
                         'comment_status'    => 'open',
                         'post_name'			=> $new_permalink
@@ -484,6 +522,7 @@ class Bigace_Import extends WP_Importer
                         'post_modified_gmt' => $post_modified_gmt,
                         'post_title'		=> $post_title,
                         'post_content'		=> $post_body,
+                        'post_excerpt'		=> $post_excerpt,
                         'post_status'		=> $post_status,
                         'menu_order'		=> $post_id,
                         'comment_status'    => 'open',
@@ -493,7 +532,7 @@ class Bigace_Import extends WP_Importer
 
                 $ret_id = wp_insert_post($post_values);
 
-                if (BIGACE_IMPORTER_CUSTOMPERMALINKS) {
+                if ($this->getOption('permalinks')) {
                     add_post_meta($ret_id, 'custom_permalink', $permalink, true);
                 }
 
@@ -529,7 +568,7 @@ class Bigace_Import extends WP_Importer
         if ($countMissing > 0) {
             echo '<p>'.sprintf(__('Could not import content of <strong>%1$s</strong> posts, files not found.'), $countMissing).'<br /><br /></p>';
         }
-        if (!BIGACE_IMPORTER_CUSTOMPERMALINKS && !empty($rewriteRules)) {
+        if (!$this->getOption('permalinks') && !empty($rewriteRules)) {
             echo '<p>'.__('Using APACHE - Post permalinks where rewritten, you need to add the following rules to your .htaccess:').
                 '<br /><textarea style="width:100%;height:200px">';
             foreach($rewriteRules as $ruleOld => $ruleNew) {
@@ -542,7 +581,7 @@ class Bigace_Import extends WP_Importer
 	}
 
     /**
-     * FIXME
+     * FIXME does not work yet
      */
     function images2wp($images)
     {
@@ -576,7 +615,7 @@ class Bigace_Import extends WP_Importer
                  * @var $parent
                  * @var $filename
                  * @var $original_filename
-                 * @var $extend (description)
+                 * @var $extended (description)
                  * @var $body
                  * @var $tags (catchwords)
                  * @var $permalink
@@ -588,7 +627,7 @@ class Bigace_Import extends WP_Importer
 
                 $post_title = $wpdb->escape($title);
 
-                $itemFile = $baseDir . '/consumer/cid'.$cid.'/items/image/' . $filename;
+                $itemFile = $this->buildCidPath($baseDir, $cid, 'image') . '/' . $filename;
 
                 $body = '';
                 if (file_exists($itemFile)) {
@@ -605,7 +644,7 @@ class Bigace_Import extends WP_Importer
                 }
 
                 $new_permalink = $permalink;
-                $replacer = get_permalink_replacer();
+                $replacer = $this->get_permalink_replacer();
                 foreach($replacer as $search => $replace) {
                     $new_permalink = preg_replace('/'.$search.'/', $replace, $new_permalink);
                 }
@@ -641,7 +680,7 @@ class Bigace_Import extends WP_Importer
                     'test_upload'   => false
                 );
 
-                $attach_id = media_handle_upload( 1, BIGACE_IMPORTER_IMAGE_POST_ID, $post_values, $overrides );
+                $attach_id = media_handle_upload( 1, $this->getOption('imageID'), $post_values, $overrides );
 
                 $bigaceimages2wpmedia[] = array($id, $attach_id);
             }
@@ -654,7 +693,7 @@ class Bigace_Import extends WP_Importer
         if ($countMissing > 0) {
             echo '<p>'.sprintf(__('Could not import content of <strong>%1$s</strong> images, files not found.'), $countMissing).'<br /><br /></p>';
         }
-        if (!BIGACE_IMPORTER_CUSTOMPERMALINKS && !empty($rewriteRules)) {
+        if (!$this->getOption('permalinks') && !empty($rewriteRules)) {
             echo '<p>'.__('Using APACHE - Image permalinks where rewritten, you need to add the following rules to your .htaccess:').
                 '<br /><textarea style="width:100%;height:200px">';
             foreach($rewriteRules as $ruleOld => $ruleNew) {
@@ -681,29 +720,29 @@ class Bigace_Import extends WP_Importer
 			{
 				$count++;
                 /**
-                 * @var id
+                 * @var $id
                  * @var itemtype
-                 * @var itemid
-                 * @var name
-                 * @var email
-                 * @var homepage
-                 * @var ip
+                 * @var $itemid
+                 * @var $name
+                 * @var $email
+                 * @var $homepage
+                 * @var $ip
                  * @var comment
-                 * @var timestamp
-                 * @var activated
+                 * @var $timestamp
+                 * @var $activated
                  * @var anonymous
                  */
                 extract($comment);
 
 				// WordPressify Data
 				$comment_ID = (int) $id;
-				//$comment_post_ID = find_comment_parent($postarr, $id);
+				//$comment_post_ID = $this->find_comment_parent($postarr, $id);
 				$comment_approved = ($activated == 1) ? 1 : 0;
 
 				// parent comment not parent post
 				$comment_parent=0;
 
-				$name = $wpdb->escape(($name));
+				$name = $wpdb->escape($name);
 				$email = $wpdb->escape($email);
 				$web = $wpdb->escape($homepage);
 				$message = $wpdb->escape($comment);
@@ -714,7 +753,7 @@ class Bigace_Import extends WP_Importer
 					// Update comments
 					$cmtData = array(
 							'comment_ID'			=> $comment_ID,
-							'comment_post_ID'		=> find_comment_parent($postarr, $itemid),
+							'comment_post_ID'		=> $this->find_comment_parent($postarr, $itemid),
 							'comment_author'		=> $name,
 							'comment_parent'		=> $comment_parent,
 							'comment_author_email'	=> $email,
@@ -731,7 +770,7 @@ class Bigace_Import extends WP_Importer
 				{
 					// Insert comments
 					$cmtData = array(
-							'comment_post_ID'		=> find_comment_parent($postarr, $itemid),
+							'comment_post_ID'		=> $this->find_comment_parent($postarr, $itemid),
 							'comment_author'		=> $name,
 							'comment_author_email'	=> $email,
 							'comment_author_url'	=> $web,
@@ -761,28 +800,22 @@ class Bigace_Import extends WP_Importer
 
     function import_configuration()
     {
-        $baseDir = get_option('bigacepath');
-
         $foundConfig = false;
-        $configPath = $baseDir . '/system/config/config.system.php';
 
-        if (file_exists($baseDir) && file_exists($configPath))
-        {
-            $_BIGACE = array();
-            include_once $configPath;
-            if (isset($_BIGACE['db'])) {
-                add_option('bigaceuser',$_BIGACE['db']['user']);
-                add_option('bigacepass',$_BIGACE['db']['pass']);
-                add_option('bigacename',$_BIGACE['db']['name']);
-                add_option('bigacehost',$_BIGACE['db']['host']);
-                add_option('spre',$_BIGACE['db']['prefix']);
-                add_option('bigacecharset',$_BIGACE['db']['character-set']);
-                $foundConfig = true;
+        try {
+            $baseDir = get_option('bigacepath');
+            $config = $this->getBigaceConfig($baseDir);
+            foreach($config as $k => $v) {
+                add_option($k, $v);
             }
+            $foundConfig = true;
+        } catch (\Exception $ex) {
+            $foundConfig = false;
+            $this->displayError(__('ERROR: Config could not be loaded: ' . $ex->getMessage()));
         }
 
         if (!$foundConfig) {
-            echo '<p style="color:red;"><strong>'.__('ERROR: The base directory could not be found or the configuration file could not be read').'</strong></p>';
+            $this->displayError(__('ERROR: The base directory could not be found or the configuration file could not be read'));
             $this->greet();
             return;
         }
@@ -797,7 +830,7 @@ class Bigace_Import extends WP_Importer
 		$this->cat2wp($cats);
 		add_option('bigace_cats', $cats);
 			
-		echo '<form action="admin.php?import=bigace&amp;step=30" method="post">';
+		echo '<form action="'.$this->createUrl('30').'" method="post">';
 		printf('<input type="submit" name="submit" value="%s" />', __('Import Users'));
 		echo '</form>';
 
@@ -809,7 +842,7 @@ class Bigace_Import extends WP_Importer
 		$users = $this->get_bigace_users();
 		$this->users2wp($users);
 		
-		echo '<form action="admin.php?import=bigace&amp;step=40" method="post">';
+		echo '<form action="'.$this->createUrl('40').'" method="post">';
 		printf('<input type="submit" name="submit" value="%s" />', __('Import Posts'));
 		echo '</form>';
 	}
@@ -820,7 +853,7 @@ class Bigace_Import extends WP_Importer
         $images = $this->get_bigace_images();
         $this->images2wp($images);
 
-        echo '<form action="admin.php?import=bigace&amp;step=40" method="post">';
+        echo '<form action="'.$this->createUrl('40').'" method="post">';
         printf('<input type="submit" name="submit" value="%s" />', __('Import Posts'));
         echo '</form>';
     }
@@ -837,12 +870,14 @@ class Bigace_Import extends WP_Importer
 		
 		if ( count($posts) != 0 ) {
 			$this->posts2wp($posts);
+        } else {
+            $this->displayError('Could not find any post to import');
         }
 			
 		if ( count($posts) >= 100 ) 
 		{
 			echo "Reloading: More work to do.";
-			$url = "admin.php?import=bigace&step=40&start=".($start+100);
+			$url = $this->createUrl('40', array('start' => ($start+100)));
 			?>
 			<script type="text/javascript">
 			window.location = '<?php echo $url; ?>';
@@ -851,7 +886,7 @@ class Bigace_Import extends WP_Importer
 			return;
 		}
 		
-		echo '<form action="admin.php?import=bigace&amp;step=50" method="post">';
+		echo '<form action="'.$this->createUrl('50').'" method="post">';
 		printf('<input type="submit" name="submit" value="%s" />', __('Import Comments'));
 		echo '</form>';
 	}
@@ -864,7 +899,7 @@ class Bigace_Import extends WP_Importer
 		$comments = $this->get_bigace_comments();
 		$this->comments2wp($comments);
 		
-		echo '<form action="admin.php?import=bigace&amp;step=60" method="post">';
+		echo '<form action="'.$this->createUrl('60').'" method="post">';
 		printf('<input type="submit" name="submit" value="%s" />', __('Finish'));
 		echo '</form>';
 	}	
@@ -891,7 +926,7 @@ class Bigace_Import extends WP_Importer
 	{
 		echo '<p>'.__('Welcome to WordPress.  We hope (and expect!) that you will find this platform incredibly rewarding!  As a new WordPress user coming from Bigace, there are some things that we would like to point out.  Hopefully, they will help your transition go as smoothly as possible.').'</p>';
 		echo '<h3>'.__('Users').'</h3>';
-		echo '<p>'.__('You have already setup WordPress and have been assigned an administrative login and password.  Forget it.  You didn\'t have that login in Bigace, why should you have it here?  Instead we have taken care to import all of your users into our system.  Unfortunately there is one downside.  Because both WordPress and Bigace uses a strong encryption hash with passwords, it is impossible to decrypt it and we are forced to assign temporary passwords to all your users.') . ' <strong>' . __( 'Every user has the same username, but their passwords are reset to "'.BIGACE_IMPORTER_PASSWORD.'". It is strongly recommended that you change passwords for all users immediately.') .'</strong></p>';
+		echo '<p>'.__('You have already setup WordPress and have been assigned an administrative login and password.  Forget it.  You didn\'t have that login in Bigace, why should you have it here?  Instead we have taken care to import all of your users into our system.  Unfortunately there is one downside.  Because both WordPress and Bigace uses a strong encryption hash with passwords, it is impossible to decrypt it and we are forced to assign temporary passwords to all your users.') . ' <strong>' . __( 'Every user has the same username, but their passwords are reset to "'.$this->getOption('password').'". It is strongly recommended that you change passwords for all users immediately.') .'</strong></p>';
 		echo '<h3>'.__('Preserving Authors').'</h3>';
 		echo '<p>'.__('Secondly, we have attempted to preserve post authors.  If you are the only author or contributor to your blog, then you are safe.  In most cases, we are successful in this preservation endeavor.  However, if we cannot ascertain the name of the writer due to discrepancies between database tables, we assign it to you, the administrative user.').'</p>';
 			echo '<h3>'.__('WordPress Resources').'</h3>';
@@ -948,8 +983,7 @@ class Bigace_Import extends WP_Importer
 
         // ==========================================
         // if possible display existing communities
-        $baseDir = get_option('bigacepath');
-        $cidIniPath = $baseDir . '/system/config/consumer.ini';
+        $cidIniPath = $this->getConsumerIniPath();
         if (file_exists($cidIniPath))
         {
             $allCids = @parse_ini_file($cidIniPath, true);
@@ -1059,7 +1093,3 @@ class Bigace_Import extends WP_Importer
 		$this->footer();
 	}
 }
-
-$bigace_import = new Bigace_Import();
-register_importer('bigace', 'Bigace', __('Import data from a Bigace site'), array ($bigace_import, 'dispatch'));
-
