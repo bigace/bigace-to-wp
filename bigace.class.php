@@ -167,7 +167,7 @@ abstract class BigaceImporter extends WP_Importer
 		echo '<form action="'.$this->createUrl('20').'" method="post">';
 		$this->db_form();
 		echo '<input type="submit" name="submit" value="'.__('Import Categories').'" />';
-		echo '</form>';
+        echo '</form>';
 	}
 
     // Get Categories
@@ -209,12 +209,11 @@ abstract class BigaceImporter extends WP_Importer
 		$cid = get_option('bigacecommunityid');
 
         /**
-         * FIXME the next ones are used in posts2wp()
+         * TODO the next ones are used in posts2wp()
          *
          * @var $author
          * @var $body
          */
-
         $posts = $bigacedb->get_results('SELECT
 							id,
 							createdate as timestamp,
@@ -231,13 +230,13 @@ abstract class BigaceImporter extends WP_Importer
 		return $posts;
 	}
 
-    function get_bigace_images()
+    function get_bigace_files($itemtype)
     {
         $bigacedb = $this->connect_bigacedb();
         $prefix = get_option('spre');
         $cid = get_option('bigacecommunityid');
 
-        $images = $bigacedb->get_results('SELECT
+        $files = $bigacedb->get_results('SELECT
 							id,
 							createdate as timestamp,
 							createby as authorid,
@@ -249,11 +248,10 @@ abstract class BigaceImporter extends WP_Importer
 							text_2 as original_filename,
 							description as extended,
 							catchwords as tags,
-							unique_name as permalink,
-							viewed
- 			   		      FROM '.$prefix.'item_4 WHERE cid='.$cid, ARRAY_A);
+							unique_name as permalink
+ 			   		      FROM '.$prefix.'item_'.$itemtype.' WHERE cid='.$cid, ARRAY_A);
 
-        return $images;
+        return $files;
     }
 
     // Get Comments
@@ -569,12 +567,17 @@ abstract class BigaceImporter extends WP_Importer
             echo '<p>'.sprintf(__('Could not import content of <strong>%1$s</strong> posts, files not found.'), $countMissing).'<br /><br /></p>';
         }
         if (!$this->getOption('permalinks') && !empty($rewriteRules)) {
-            echo '<p>'.__('Using APACHE - Post permalinks where rewritten, you need to add the following rules to your .htaccess:').
-                '<br /><textarea style="width:100%;height:200px">';
+            echo '<div>'.__('APACHE permalinks for your .htaccess:').'<br /><textarea style="width:100%;height:200px">';
             foreach($rewriteRules as $ruleOld => $ruleNew) {
-                echo "\n" . 'RewriteRule ^/'.$ruleOld.'$ /'.$ruleNew.' [L]';
+                echo "\n" . 'RewriteRule ^'.$ruleOld.'$ /'.$ruleNew.' [L]';
             }
-            echo '</textarea><br /></p>';
+            echo '</textarea></div>';
+
+            echo '<div>'.__('NGINX permalinks for your config:').'<br /><textarea style="width:100%;height:200px">';
+            foreach($rewriteRules as $ruleOld => $ruleNew) {
+                echo "\n" . 'rewrite ^/'.$ruleOld.'$ /'.$ruleNew.' permanent';
+            }
+            echo '</textarea></div>';
         }
 
         return true;
@@ -583,7 +586,7 @@ abstract class BigaceImporter extends WP_Importer
     /**
      * FIXME does not work yet
      */
-    function images2wp($images)
+    function files2wp($files, $name, $itemtype)
     {
         // General Housekeeping
         global $wpdb;
@@ -591,19 +594,24 @@ abstract class BigaceImporter extends WP_Importer
         $countMissing = 0;
         $cid = get_option('bigacecommunityid');
         $baseDir = get_option('bigacepath');
+        $rewriteRules = array();
 
         $bigaceimages2wpmedia = get_option('bigaceimages2wpmedia');
         if ( !$bigaceimages2wpmedia ) $bigaceimages2wpmedia = array();
+        $targetUrl = '/wp-content/uploads/sites/' . get_current_blog_id() . '/import/'.$itemtype.'/';
+        $targetDir = ABSPATH . $targetUrl;
 
         // Do the Magic
-        if(is_array($images))
+        if(is_array($files))
         {
-            echo '<p>'.__('Importing Images...').'<br /><br /></p>';
-            foreach($images as $post)
+            echo '<p>'.__('Importing '.ucfirst($name).'...').'</p>';
+            echo '<p>'.__('<b>Please note:</b> This does not import '.ucfirst($name).' to your media center, but only to a directory within the Wordpress upload folder. You have to adjust your webserver config or .htaccess file to make use of them:').'</p>';
+            echo '<p>'.__('Copy the rewrite rules matching your webserver from the textarea below to your config.').'<br /><br /></p>';
+            foreach($files as $post)
             {
-                $count++;
-                if(!is_array($post))
+                if(!is_array($post)) {
                     $post = (array) $post;
+                }
 
                 /**
                  * @var $id
@@ -623,83 +631,72 @@ abstract class BigaceImporter extends WP_Importer
                  */
                 extract($post);
 
-                $post_id = $id;
+                $itemFile = $this->buildCidPath($baseDir, $cid, $itemtype) . '/' . $filename;
 
-                $post_title = $wpdb->escape($title);
-
-                $itemFile = $this->buildCidPath($baseDir, $cid, 'image') . '/' . $filename;
-
-                $body = '';
-                if (file_exists($itemFile)) {
-                    $body = file_get_contents($itemFile);
-                } else {
+                // original file is not existing
+                if (!file_exists($itemFile)) {
                     $countMissing++;
+                    continue;
                 }
 
-                // TODO - where to put image description (like license infos)
-                if ($wpdb->escape($extended) != "") {
-                    $post_body = '<p>' . $wpdb->escape($extended) . '</p>' . $wpdb->escape($body);
-                } else {
-                    $post_body = $wpdb->escape($body);
+                // target directory is not existing
+                if (!file_exists($targetDir)) {
+                    if (!@mkdir($targetDir, 0777, true)) {
+                        $this->displayError('Could not create import directory at: ' . $targetDir);
+                        return false;
+                    }
+                }
+
+                // target directory can not be written
+                if (!is_writable($targetDir) || !is_dir($targetDir)) {
+                    $this->displayError('Import directory is not writable: ' . $targetDir);
+                    return false;
                 }
 
                 $new_permalink = $permalink;
                 $replacer = $this->get_permalink_replacer();
+                $replacer['.html'] = '.jpg';
                 foreach($replacer as $search => $replace) {
                     $new_permalink = preg_replace('/'.$search.'/', $replace, $new_permalink);
                 }
-                $new_permalink = sanitize_title_with_dashes($new_permalink, $new_permalink, 'save');
-                if ($new_permalink != $permalink) {
-                    $rewriteRules[$permalink] = $new_permalink;
+                $new_permalink = sanitize_file_name($new_permalink);
+                $new_file = $targetDir . $new_permalink;
+
+                // move file to its new destination
+                if (!rename($itemFile, $new_file)) {
+                    $this->displayError('Could not move file to new location: ' . $new_file);
+                    $countMissing++;
+                    continue;
                 }
 
-                $post_values = array(
-                    'post_author'		=> $authorid,
-                    'post_modified'		=> $post_modified,
-                    'post_modified_gmt' => $post_modified_gmt,
-                    'post_title'		=> $post_title,
-                    'post_content'		=> $post_body,
-                    'post_status'		=> $post_status,
-                    'menu_order'		=> $post_id,
-                    'comment_status'    => 'open',
-                    'post_name'			=> $new_permalink
-                );
+                $rewriteRules[$permalink] = $targetUrl . $new_permalink;
+                $bigaceimages2wpmedia[] = array($permalink, $new_permalink);
 
-                // TODO - set contents of the _FILES array correctly
-                $_FILES[1] = array(
-                    'name'      => '',
-                    'error'     => 0,
-                    'size'      => 0,
-                    'tmp_name'  => '',
-                    'type'      => $mimetype
-                );
-
-                $overrides = array(
-                    'test_form'     => false,
-                    'test_size'     => false,
-                    'test_upload'   => false
-                );
-
-                $attach_id = media_handle_upload( 1, $this->getOption('imageID'), $post_values, $overrides );
-
-                $bigaceimages2wpmedia[] = array($id, $attach_id);
+                $count++;
             }
         }
 
         // Store ID translation for later use
         update_option('bigaceimages2wpmedia', $bigaceimages2wpmedia);
 
-        echo '<p>'.sprintf(__('Done! <strong>%1$s</strong> images imported.'), $count).'<br /><br /></p>';
+        echo '<p>'.sprintf(__('Done! <strong>%1$s</strong> '.$name.' imported.'), ($count - $countMissing)).'<br /><br /></p>';
         if ($countMissing > 0) {
-            echo '<p>'.sprintf(__('Could not import content of <strong>%1$s</strong> images, files not found.'), $countMissing).'<br /><br /></p>';
+            echo '<p>'.sprintf(__('Could not import <strong>%1$s</strong> '.$name.'.'), $countMissing).'<br /><br /></p>';
         }
-        if (!$this->getOption('permalinks') && !empty($rewriteRules)) {
-            echo '<p>'.__('Using APACHE - Image permalinks where rewritten, you need to add the following rules to your .htaccess:').
-                '<br /><textarea style="width:100%;height:200px">';
+
+        if (!empty($rewriteRules)) {
+            echo '<div>'.__('APACHE rules for your .htaccess:').'<br /><textarea style="width:100%;height:200px">';
             foreach($rewriteRules as $ruleOld => $ruleNew) {
-                echo "\n" . 'RewriteRule ^/'.$ruleOld.'$ /'.$ruleNew.' [L]';
+                echo "\n" . 'RewriteRule "^'.$ruleOld.'$" '.$ruleNew.' [L]';
             }
-            echo '</textarea><br /></p>';
+            echo '</textarea></div>';
+
+            echo '<div>'.__('NGINX rules for your config:').'<br /><textarea style="width:100%;height:200px">';
+            foreach($rewriteRules as $ruleOld => $ruleNew) {
+                $ruleOld = str_replace(" ", "\s", $ruleOld);
+                echo "\n" . 'rewrite ^/'.$ruleOld.'$ '.$ruleNew.' break;';
+            }
+            echo '</textarea></div>';
         }
 
         return true;
@@ -842,16 +839,27 @@ abstract class BigaceImporter extends WP_Importer
 		$users = $this->get_bigace_users();
 		$this->users2wp($users);
 		
-		echo '<form action="'.$this->createUrl('40').'" method="post">';
-		printf('<input type="submit" name="submit" value="%s" />', __('Import Posts'));
+		echo '<form action="'.$this->createUrl('35').'" method="post">';
+		printf('<input type="submit" name="submit" value="%s" />', __('Import Images'));
 		echo '</form>';
 	}
 
     // Image Import
     function import_images()
     {
-        $images = $this->get_bigace_images();
-        $this->images2wp($images);
+        $images = $this->get_bigace_files(4);
+        $this->files2wp($images, 'images', 'image');
+
+        echo '<form action="'.$this->createUrl('37').'" method="post">';
+        printf('<input type="submit" name="submit" value="%s" />', __('Import Files'));
+        echo '</form>';
+    }
+
+    // Image Files
+    function import_files()
+    {
+        $images = $this->get_bigace_files(5);
+        $this->files2wp($images, 'files', 'file');
 
         echo '<form action="'.$this->createUrl('40').'" method="post">';
         printf('<input type="submit" name="submit" value="%s" />', __('Import Posts'));
@@ -1078,6 +1086,9 @@ abstract class BigaceImporter extends WP_Importer
 				break;
             case 35 :
                 $this->import_images();
+                break;
+            case 37 :
+                $this->import_files();
                 break;
 			case 40 :
 				$this->import_posts();

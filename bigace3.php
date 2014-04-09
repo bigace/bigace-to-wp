@@ -34,7 +34,17 @@ class Bigace_Importer_V3 extends BigaceImporter
         return '3';
     }
 
-    public function buildCidPath($baseDir, $cid, $itemtype) {
+    public function buildCidPath($baseDir, $cid, $itemtype)
+    {
+        switch ($itemtype) {
+            case 'image':
+            case 'file':
+                $itemtype = $itemtype . 's';
+                break;
+            default:
+                break;
+        }
+
         return $baseDir . '/sites/cid'.$cid.'/'.$itemtype.'/';
     }
 
