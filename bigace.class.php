@@ -249,7 +249,7 @@ abstract class BigaceImporter extends WP_Importer
 							description as extended,
 							catchwords as tags,
 							unique_name as permalink
- 			   		      FROM '.$prefix.'item_'.$itemtype.' WHERE id != "-1" cid='.$cid, ARRAY_A);
+ 			   		      FROM '.$prefix.'item_'.$itemtype.' WHERE id != "-1" AND cid='.$cid, ARRAY_A);
 
         return $files;
     }
