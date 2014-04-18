@@ -6,7 +6,7 @@ Description: Import content from a Bigace v3 powered site into WordPress
 Author: Kevin Papst
 Author URI: http://www.kevinpapst.de/
 License: Public Domain or CC0 ( http://creativecommons.org/publicdomain/zero/1.0/ )
-Version: 1.1
+Version: 1.2
 Changelog: Please see README.md
 Kudos: Code was forked from the s9y (serendipity) importer and adjusted to work with Bigace, see https://raw.github.com/ShakataGaNai/s9y-to-wp/
 */
