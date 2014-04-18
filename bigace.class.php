@@ -663,8 +663,8 @@ abstract class BigaceImporter extends WP_Importer
                 $new_file = $targetDir . $new_permalink;
 
                 // move file to its new destination
-                if (!rename($itemFile, $new_file)) {
-                    $this->displayError('Could not move file to new location: ' . $new_file);
+                if (!copy($itemFile, $new_file)) {
+                    $this->displayError('Could not copy file to new location: ' . $new_file);
                     $countMissing++;
                     continue;
                 }
