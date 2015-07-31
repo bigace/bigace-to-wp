@@ -22,7 +22,7 @@ There seems to be no license attached, maybe Public Domain or [CC0](http://creat
  * ``` TRUNCATE `wp_comments`; ```
  * ``` TRUNCATE `wp_commentmeta`; ```
  * ``` DELETE FROM `wp_terms` WHERE wp_terms.term_id != 1; ```
-3. Copy bigace.php to /wordpress/wp-content/plugins/
+3. Copy the two files bigace.class.php and bigace2.php (or bigace3.php in case you were using Bigace v3) to /wordpress/wp-content/plugins/
 4. Login to Wordpress Admin Interface
 5. Goto Plugins > Installed plugins and activate "Bigace to Wordpress importer"
 6. Goto Tools > Import

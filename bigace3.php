@@ -17,7 +17,7 @@ if ( !defined('WP_LOAD_IMPORTERS') ) {
 }
 
 if ( !class_exists('BigaceImporter') ) {
-    require_once __DIR__ . '/bigace.class.php';
+    require_once dirname(__FILE__) . '/bigace.class.php';
 }
 
 class Bigace_Importer_V3 extends BigaceImporter
